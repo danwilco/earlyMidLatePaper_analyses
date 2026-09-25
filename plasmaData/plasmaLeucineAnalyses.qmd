@@ -1,0 +1,167 @@
+---
+title: "Plasma Amino Acid Plotting and Basic Analyses"
+author: "Daniel Wilkinson"
+format: pdf
+editor: visual
+---
+
+To show that the feeding regimes had the defined effects at the stated times in the study protocol, plasma leucine concentrations were measured to act as a surrogate for all EAAs in the feed. Due to loss of some samples during storage and instrumentation issues, we were only able to analyse a proportion of the volunteers plasma in each group, n = 5 for Early, n = 6 for Mid and n = 6 for Late (L07 removed as too many missing data points). Although not ideal, this still allowed us to highlight the timecourse AA plasma profile in response to each re-feeding regime.
+
+```{r}
+# load in libraries
+library(tidyverse) # for data loading and manipulation
+library(tidyplots) # for publication ready plots
+library(lme4) # for linear model analyses
+library(garfify) # for post-hoc constrasts
+```
+
+First step is to create publication ready visulisations for each re-feeding group. We will load in the data in long format and then use tidyplots to generate publication ready plots for each re-feed group.
+
+```{r}
+# load in data and plot - and adjust with additions and changes
+early <- read_csv("plasmaLeu_Early.csv")
+timecourseEarly <- tidyplot(early, x = time, y = leu_conc) |>
+  add_mean_dot(size = 3) |>
+  add_mean_line(linewidth = 1.25, alpha = 0.5) |>
+  add_sem_errorbar(width = 10) |>
+  theme_tidyplot() |>
+  adjust_size(width = 150, height = 80) |>
+  adjust_colors("#0072B2") |>
+  adjust_x_axis_title(title = "Time (mins)") |>
+  adjust_y_axis_title("$Arterialised~~Plasma~~Leucine~~Concentration~~(mu*M)$") |>
+  adjust_y_axis(limits = c(0,800)) |>
+  adjust_x_axis(limits = c(0,600)) |>
+  adjust_font(fontsize = 12) |>
+  save_plot("leuConcEarly.pdf")
+
+mid <- read_csv("plasmaLeu_Mid.csv")
+timecourseMid <- tidyplot(mid, x = time, y = leu_conc) |>
+  add_mean_dot(size = 3) |>
+  add_mean_line(linewidth = 1.25, alpha = 0.5) |>
+  add_sem_errorbar(width = 10) |>
+  theme_tidyplot() |>
+  adjust_size(width = 150, height = 80) |>
+  adjust_colors("#009E73") |>
+  adjust_x_axis_title(title = "Time (mins)") |>
+  adjust_y_axis_title("$Arterialised~~Plasma~~Leucine~~Concentration~~(mu*M)$") |>
+  adjust_y_axis(limits = c(0,800)) |>
+  adjust_x_axis(limits = c(0,600)) |>
+  adjust_font(fontsize = 12) |>
+  save_plot("leuConcMid.pdf")
+
+late <- read_csv("plasmaLeu_Late.csv")
+timecourseLate <- tidyplot(late, x = time, y = leu_conc) |>
+  add_mean_dot(size = 3) |>
+  add_mean_line(linewidth = 1.25, alpha = 0.5) |>
+  add_sem_errorbar(width = 10) |>
+  theme_tidyplot() |>
+  adjust_size(width = 150, height = 80) |>
+  adjust_colors("#D55E00") |>
+  adjust_x_axis_title(title = "Time (mins)") |>
+  adjust_y_axis_title("$Arterialised~~Plasma~~Leucine~~Concentration~~(mu*M)$") |>
+  adjust_y_axis(limits = c(0,800)) |>
+  adjust_x_axis(limits = c(0,600)) |>
+  adjust_font(fontsize = 12) |>
+  save_plot("leuConcLate.pdf")
+
+```
+
+Next up is a simple linear model statistical analyses with post hoc comparisons to determine where significant increases in concentrations occur compared to baseline values in response to the feed and the re-feed. First summaries and normal distribution tests are run.
+
+```{r}
+# summary stats and normality checks
+# set as factors
+early$time <- as.factor(early$time)
+mid$time <- as.factor(mid$time)
+late$time <- as.factor(late$time)
+
+# summarise data in tables
+# early
+summary <- early |>
+  group_by(time) |>
+  get_summary_stats(leu_conc, type = "mean_sd")
+
+sum_early <- data.frame(summary)
+write_csv(sum_early, "summaryData_early.csv")
+
+# assess for normal distribution
+normality <- early |>
+  group_by(time) |>
+  shapiro_test(leu_conc)
+
+norm_early <- data.frame(normality)
+write_csv(norm_early, "normalityData_early.csv")
+
+# mid
+summary <- mid |>
+  group_by(time) |>
+  get_summary_stats(leu_conc, type = "mean_sd")
+
+sum_mid <- data.frame(summary)
+write_csv(sum_mid, "summaryData_mid.csv")
+
+# assess for normal distribution
+normality <- mid |>
+  group_by(time) |>
+  shapiro_test(leu_conc)
+
+norm_mid <- data.frame(normality)
+write_csv(norm_mid, "normalityData_mid.csv")
+
+# late
+summary <- late |>
+  group_by(time) |>
+  get_summary_stats(leu_conc, type = "mean_sd")
+
+sum_late <- data.frame(summary)
+write_csv(sum_late, "summaryData_late.csv")
+
+# assess for normal distribution
+normality <- late |>
+  group_by(time) |>
+  shapiro_test(leu_conc)
+
+norm_late <- data.frame(normality)
+write_csv(norm_late, "normalityData_late.csv")
+
+```
+
+All data pas normal distribution tests except for 1 time point, however with sample size data sets these tests become less accurate, therefore a Gaussian Distribution can be assumed. Now linear models are run to look for significant changes in concentration from baseline with time.
+
+```{r}
+# Random intercept and random slope for time per subject and simple linear model run using lme4 package with subjects as random variable
+# early
+early$time <- as.factor(early$time)
+model <- lmer(leu_conc ~ time + (1 | subject), data = early)
+
+# View the ANOVA-style summary table
+anova_early <- anova(model)
+
+## now run grafify posthoc_vsRef to look at contrasts back to baseline for post-hoc analyses
+contrastEarly <- posthoc_vsRef(Model = model, Fixed_Factor = "time", Ref_Level = 1)
+write_csv(data.frame(contrastEarly$contrasts), "lm_constrasts_early.csv")
+
+# mid
+mid$time <- as.factor(mid$time)
+model <- lmer(leu_conc ~ time + (1 | subject), data = mid)
+
+# View the ANOVA-style summary table
+anova_mid <- anova(model)
+
+## now run grafify posthoc_vsRef to look at contrasts back to baseline for post-hoc analyses
+contrastMid <- posthoc_vsRef(Model = model, Fixed_Factor = "time", Ref_Level = 1)
+write_csv(data.frame(contrastMid$contrasts), "lm_constrasts_mid.csv")
+
+# late
+late$time <- as.factor(late$time)
+model <- lmer(leu_conc ~ time + (1 | subject), data = late)
+
+# View the ANOVA-style summary table
+anova_late <- anova(model)
+
+## now run grafify posthoc_vsRef to look at contrasts back to baseline for post-hoc analyses
+contrastLate <- posthoc_vsRef(Model = model, Fixed_Factor = "time", Ref_Level = 1)
+write_csv(data.frame(contrastLate$contrasts), "lm_constrasts_late.csv")
+```
+
+Simple linear model analyses complete, and outputs saved to file.
