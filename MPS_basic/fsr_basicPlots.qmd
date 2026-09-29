@@ -1,0 +1,183 @@
+---
+title: "FSR Plotting and Basic Stats"
+author: "Daniel Wilkinson"
+format: pdf
+editor: visual
+---
+
+In a similar way to the plasma leucine analyses, we are interested in visualising the FSR data and performing some simple stats for each group.
+
+```{r}
+{r}
+# load in libraries
+library(tidyverse) # for data loading and manipulation
+library(tidyplots) # for publication ready plots
+library(lme4) # for linear model analyses
+library(garfify) # for post-hoc constrasts
+library(emmeans) # additional post-hoc options
+```
+
+First step is to create publication ready visulisations for each re-feeding group, we are interested here in looking at the groups individually and in the same plot for visual comparison.
+
+```{r}
+# load in data and plot - and adjust with additions and changes
+early <- read_csv("fsr_early.csv")
+mid <- read_csv("fsr_mid.csv")
+late <- read_csv("fsr_late.csv")
+
+# combine for single plot
+fsr <- bind_rows(early, mid, late)
+fsr <- fsr |> 
+  mutate(group = fct_relevel(group,c("Early", "Mid", "Late")))
+
+
+timecourseFSR <- tidyplot(fsr, x = time, y = fsr, color = group) |>
+  add_mean_dot(size = 3) |>
+  add_mean_line(linewidth = 1.25, alpha = 0.5) |>
+  add_sem_errorbar(width = 10) |>
+  theme_tidyplot() |>
+  adjust_size(width = 150, height = 80) |>
+  adjust_x_axis_title(title = "Time (mins)") |>
+  adjust_y_axis_title("Myofibrillar FSR (%/h)") |>
+  adjust_y_axis(limits = c(0,0.12)) |>
+  adjust_font(fontsize = 12) |>
+  adjust_legend_title(title = "Re-Feed Group") |>
+  save_plot("combinedFSR.pdf")
+```
+
+Next up is a simple linear model statistical analyses with post hoc comparisons to determine where significant increases in FSR occur compared to baseline values in response to the feed and the re-feed periods for each group. First summaries and normal distribution tests are run.
+
+```{r}
+# summary stats and normality checks
+# set as factors
+early$time_period <- factor(early$time_period, levels = c("Basal", "0-90", "90-180", "180-270"))
+mid$time_period <- factor(mid$time_period, levels = c("Basal", "0-90", "90-180", "180-240", "240-330"))
+late$time_period <- factor(late$time_period, levels = c("Basal", "0-90", "90-180", "180-300", "300-390"))
+
+# summarise data in tables
+# early
+summary <- early |>
+  group_by(time_period) |>
+  get_summary_stats(fsr, type = "mean_sd")
+
+sum_early <- data.frame(summary)
+write_csv(sum_early, "summaryFSRData_early.csv")
+
+# assess for normal distribution
+normality <- early |>
+  group_by(time_period) |>
+  shapiro_test(fsr)
+
+norm_early <- data.frame(normality)
+write_csv(norm_early, "normalityFSRData_early.csv")
+
+# mid
+summary <- mid |>
+  group_by(time_period) |>
+  get_summary_stats(fsr, type = "mean_sd")
+
+sum_mid <- data.frame(summary)
+write_csv(sum_mid, "summaryFSRData_mid.csv")
+
+# assess for normal distribution
+normality <- mid |>
+  group_by(time_period) |>
+  shapiro_test(fsr)
+
+norm_mid <- data.frame(normality)
+write_csv(norm_mid, "normalityFSRData_mid.csv")
+
+# late
+summary <- late |>
+  group_by(time_period) |>
+  get_summary_stats(fsr, type = "mean_sd")
+
+sum_late <- data.frame(summary)
+write_csv(sum_late, "summaryFSRData_late.csv")
+
+# assess for normal distribution
+normality <- late |>
+  group_by(time_period) |>
+  shapiro_test(fsr)
+
+norm_late <- data.frame(normality)
+write_csv(norm_late, "normalityFSRData_late.csv")
+
+```
+
+Some missing samples timepoints in the mid and late group due to sample processing issues, loss of sample in processing etc.. However all show normal distribution except for one group Mid 0 timepoint, however with such small n for each group, we can assume that this is inconsequential to the overall analyses. Now linear models are run to look for significant changes in FSR due tot he fedding in each group.
+
+```{r}
+# Random intercept and random slope for time per subject and simple linear model run using lme4 package with subjects as random variable
+# early
+model <- lmer(fsr ~ time_period +(1 | subject), data = early)
+
+# View the ANOVA-style summary table - no main effect of time for early fsr, contrasts run anyway
+anova_early <- anova(model)
+
+## now look at contrasts for post-hoc analyses
+contrastFSR_early <- emmeans(model, pairwise ~ time_period)
+write_csv(data.frame(contrastFSR_early$contrasts), "lm_constrastsFSR_early.csv")
+
+# boxplot of early group
+fsrBoxplot_Early <- tidyplot(early, x = time_period, y = fsr) |>
+  add_boxplot(box_width = 0.5, alpha = 0.5, whiskers_width = 0.5) |>
+  add_data_points_jitter(size = 2, alpha = 0.5) |>
+  theme_tidyplot() |>
+  adjust_size(width = 150, height = 80) |>
+  adjust_colors("#0072B2") |>
+  adjust_x_axis_title(title = "FSR Time Period") |>
+  adjust_y_axis_title("Myofibrillar FSR (%/h)") |>
+  adjust_y_axis(limits = c(0,0.16)) |>
+  adjust_font(fontsize = 12) |>
+  save_plot("fsrBoxPlotEarly.pdf")
+
+# mid
+model <- lmer(fsr ~ time_period + (1 | subject), data = mid)
+
+# View the ANOVA-style summary table - no main effect of time for early fsr, contrasts run anyway
+anova_mid <- anova(model)
+
+## now look at contrasts for post-hoc analyses
+contrastFSR_mid <- emmeans(model, pairwise ~ time_period)
+write_csv(data.frame(contrastFSR_mid$contrasts), "lm_constrastsFSR_mid.csv")
+
+# boxplot of mid group
+fsrBoxplot_Mid <- tidyplot(mid, x = time_period, y = fsr) |>
+  add_boxplot(box_width = 0.5, alpha = 0.5, whiskers_width = 0.5) |>
+  add_data_points_jitter(size = 2, alpha = 0.5) |>
+  theme_tidyplot() |>
+  adjust_size(width = 150, height = 80) |>
+  adjust_colors("#009E73") |>
+  adjust_x_axis_title(title = "FSR Time Period") |>
+  adjust_y_axis_title("Myofibrillar FSR (%/h)") |>
+  adjust_y_axis(limits = c(0,0.16)) |>
+  adjust_font(fontsize = 12) |>
+  save_plot("fsrBoxPlotMid.pdf")
+
+# late
+model <- lmer(fsr ~ time_period +(1 | subject), data = late)
+
+# View the ANOVA-style summary table - no main effect of time for early fsr, contrasts run anyway
+anova_late <- anova(model)
+
+## now look at contrasts for post-hoc analyses
+contrastFSR_late <- emmeans(model, pairwise ~ time_period)
+write_csv(data.frame(contrastFSR_late$contrasts), "lm_constrastsFSR_late.csv")
+
+# boxplot of late group
+fsrBoxplot_Late <- tidyplot(late, x = time_period, y = fsr) |>
+  add_boxplot(box_width = 0.5, alpha = 0.5, whiskers_width = 0.5) |>
+  add_data_points_jitter(size = 2, alpha = 0.5) |>
+  theme_tidyplot() |>
+  adjust_size(width = 150, height = 80) |>
+  adjust_colors("#D55E00") |>
+  adjust_x_axis_title(title = "FSR Time Period") |>
+  adjust_y_axis_title("Myofibrillar FSR (%/h)") |>
+  adjust_y_axis(limits = c(0,0.16)) |>
+  adjust_font(fontsize = 12) |>
+  save_plot("fsrBoxPlotLate.pdf")
+
+```
+
+Simple linear model analyses complete, and outputs saved to file.
