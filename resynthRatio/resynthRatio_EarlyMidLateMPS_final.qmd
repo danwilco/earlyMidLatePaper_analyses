@@ -1,0 +1,333 @@
+---
+title: "AJ1_EarlyMidLateMPS"
+author: "Daniel Wilkinson and Claude Code"
+date: today
+format:
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: show
+editor: visual
+---
+
+# Introduction
+
+This project examines the nadir that follows the initial stimulation of muscle protein synthesis (MPS) by nutrition (essential amino acids, EAA), and how long this nadir period needs to last before a second feed can robustly re-stimulate MPS.
+
+Following an initial 15 g EAA feed at time 0, participants were randomised to receive a second 15 g EAA feed at 90, 150, or 210 minutes post-initial feed (the Early, Mid, and Late groups, respectively). While this is a complex design, this document works through an approach for determining when MPS resynthesis becomes possible again — that is, when the muscle-full effect is no longer restrictive.
+
+Two features of the real trajectory data need to be accounted for.
+
+## Peak Window Contamination
+
+The 90–180 min window is only a clean, uncontaminated single-feed peak for the group whose refeed happens *after* it closes. In this design that's the Late group (refeed at 210 min). The Early group (refeed at 90 min) and Mid group (refeed at 150 min) have their 90–180 min reading contaminated by their own refeed, so their "peak" values aren't trustworthy on their own — the reference peak increment is borrowed from the Late group instead.
+
+## Post-Refeed Lag
+
+The post-refeed response doesn't appear immediately either — it mirrors the same lag seen after the first feed. So the *later* post-refeed window (90–180 min after each subject's own refeed) is used as the resynthesis value, not the immediate one (0–90 min after refeed), which may understate the fully-developed response.
+
+## Measurement Time Structure
+
+The time structure per group (mirroring the real data) is:
+
+- **Early** (refeed at 90 min): measured at 0, 90, 180, 270 min
+- **Mid** (refeed at 150 min): measured at 0, 90, 180, 240, 330 min
+- **Late** (refeed at 210 min): measured at 0, 90, 180, 300, 390 min
+
+# Setup
+
+## Load Libraries
+
+```{r}
+library(tidyverse)
+library(ggthemes)
+library(emmeans)   # pairwise post-hoc contrasts
+library(FSA)       # Dunn's test (non-parametric post-hoc)
+library(ggsignif)  # significance brackets on plots
+```
+
+## Data
+
+The raw MPS values are loaded from a data frame with the following columns:
+
+- `subject` — subject ID (e.g. Early1, Early2, …)
+- `group` — Early / Mid / Late
+- `baseline` — post-absorptive (PA) period
+- `dip` — initial 0–90 min lag phase
+- `peak_window` — 90–180 min period post initial feed for each group
+- `post1` — 0–90 min post-refeed (note: identical to `peak_window` for the Early group, since their refeed coincides with the start of that window)
+- `post2` — 90–180 min post-refeed (the resynthesis window)
+- `post1_time` — absolute time (min) of the `post1` window; differs by group (Early = 180, Mid = 240, Late = 300)
+- `post2_time` — absolute time (min) of the `post2` window; differs by group (Early = 270, Mid = 330, Late = 390)
+
+```{r}
+mps <- read_csv("MPS_EarlyMidLate.csv")
+mps$group <- factor(mps$group, levels = c("Early", "Mid", "Late"))
+```
+
+### Baseline Comparability Across Groups
+
+Worth checking whether baselines are comparable across groups before borrowing a peak reference from one group and applying it to the others.
+
+```{r}
+summary(aov(baseline ~ group, data = mps))
+kruskal.test(baseline ~ group, data = mps)
+
+ggplot(mps, aes(x = group, y = baseline)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  labs(title = "Baseline MPS by group - check for imbalance") +
+  theme_minimal()
+```
+
+The data do show baseline differences in MPS between groups. How this affects the overall outcome is examined later, once the resynthesis ratio has been calculated.
+
+### Missing Data
+
+Missing values matter most when they fall on `baseline` or `post2`, since both are required to calculate the resynthesis ratio. `dip`, `peak_window`, and `post1` are checked too, since they still feed into the descriptive trajectory plots and the reference peak calculation.
+
+```{r}
+mps %>%
+  group_by(group) %>%
+  summarise(across(c(baseline, dip, peak_window, post1, post2),
+                    ~ sum(is.na(.)), .names = "missing_{.col}"))
+
+mps %>%
+  group_by(group) %>%
+  summarise(n_total = n(),
+            n_with_full_data = sum(!is.na(baseline) & !is.na(post2)))
+```
+
+One subject in the Late group is missing `post2` and is removed from the resynthesis ratio calculation, since that value cannot be reconstructed. Their other data (e.g. `baseline`, `peak_window`) remains valid and is retained for the reference peak calculation below.
+
+```{r}
+index <- is.na(mps$post2)
+mps_trim <- mps[!index, ]
+```
+
+# Reference Peak Increment
+
+Because of how the study was designed, only the Late group has a clean, uncontaminated peak window: in the Early group the 90–180 min window occurs before MPS has fully risen toward its natural peak, and in the Mid group it is partially mixed with the response to the second feed. The Late group is therefore used as the reference for what an undisturbed single-feed peak looks like.
+
+This calculation only needs `peak_window` and `baseline`, not `post2` — so it is calculated from the full `mps` data set (before the subject missing `post2` was removed), to avoid discarding an otherwise valid data point unnecessarily.
+
+```{r}
+reference_group <- "Late"
+
+ref_peak_increment <- mps %>%
+  filter(group == reference_group) %>%
+  summarise(ref = mean(peak_window - baseline, na.rm = TRUE)) %>%
+  pull(ref)
+
+ref_peak_increment
+```
+
+# Resynthesis Ratio
+
+The resynthesis ratio uses the later post-refeed window (`post2`) and each subject's own baseline — not each group's own (potentially contaminated) `peak_window` value — divided by the reference peak increment calculated above.
+
+```{r}
+mps_resynth <- mps_trim %>%
+  mutate(
+    own_increment     = post2 - baseline,
+    resynthesis_ratio = own_increment / ref_peak_increment
+  )
+
+mps_resynth %>%
+  select(subject, group, IFI, baseline, peak_window, post1, post2,
+         own_increment, resynthesis_ratio)
+```
+
+## Visual Checks
+
+```{r}
+ggplot(mps_resynth, aes(x = IFI, y = resynthesis_ratio)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = TRUE) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  labs(x = "Inter-feed interval (min)", y = "Resynthesis ratio",
+       title = "Resynthesis ratio vs inter-feed interval",
+       subtitle = "Dashed line = fully matched the reference peak increment") +
+  theme_minimal()
+```
+
+```{r}
+traj_long <- mps_resynth %>%
+  select(subject, group, IFI, baseline, dip, peak_window, post1, post2,
+         post1_time, post2_time) %>%
+  pivot_longer(cols = c(baseline, dip, peak_window, post1, post2),
+               names_to = "window", values_to = "MPS") %>%
+  mutate(time = case_when(
+    window == "baseline"    ~ 0,
+    window == "dip"         ~ 90,
+    window == "peak_window" ~ 180,
+    window == "post1"       ~ post1_time,
+    window == "post2"       ~ post2_time
+  ))
+
+ref_peak_level <- ref_peak_increment +
+  mean(mps_resynth$baseline[mps_resynth$group == reference_group])
+
+ggplot(traj_long, aes(x = time, y = MPS, color = group, group = subject)) +
+  geom_line(alpha = 0.3) +
+  stat_summary(aes(group = group), fun = mean, geom = "line", linewidth = 1.2) +
+  stat_summary(aes(group = group), fun = mean, geom = "point", size = 2.5) +
+  geom_hline(yintercept = ref_peak_level, linetype = "dashed", color = "grey40") +
+  labs(x = "Time (min)", y = "MPS", color = "Group",
+       title = "MPS trajectories with reference peak level") +
+  theme_minimal()
+```
+
+## Effect of Inter-Feed Interval on the Resynthesis Ratio
+
+A linear model tests whether the resynthesis ratio changes with inter-feed interval — i.e. whether refeed timing affects the ability to re-stimulate MPS to the same level as the initial feed.
+
+```{r}
+m_ifi <- lm(resynthesis_ratio ~ IFI, data = mps_resynth)
+summary(m_ifi)
+confint(m_ifi)
+
+kruskal.test(resynthesis_ratio ~ group, data = mps_resynth)
+summary(aov(resynthesis_ratio ~ group, data = mps_resynth))
+```
+
+This model did not reach statistical significance, though the result approached it — suggesting a larger sample size may be needed to detect a genuine effect of refeed timing on the (additive) resynthesis ratio.
+
+## Baseline-Adjusted Sensitivity Analysis
+
+The resynthesis ratio already corrects for each subject's own baseline, but if baseline differs systematically by group — as the earlier check suggested — that's still worth examining directly, both because baseline may affect how much room there is for MPS to increase (a ceiling/floor effect), and because it raises a broader question of whether the groups are comparable on other unmeasured factors.
+
+```{r}
+cor.test(mps_resynth$baseline, mps_resynth$resynthesis_ratio, method = "spearman")
+
+m_adjusted <- lm(resynthesis_ratio ~ IFI + baseline, data = mps_resynth)
+summary(m_adjusted)
+confint(m_adjusted)
+
+summary(m_ifi)
+
+ggplot(mps_resynth, aes(x = baseline, y = resynthesis_ratio, color = group)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "grey40") +
+  labs(x = "Baseline MPS", y = "Resynthesis ratio",
+       title = "Does baseline relate to the resynthesis ratio?") +
+  theme_minimal()
+```
+
+Baseline MPS does appear to relate to the resynthesis ratio: the higher the baseline, the lower the ratio. This points to the additive correction being incomplete, and motivates testing a proportional (fold-change) version of the ratio instead, in case the relationship between baseline and the post-refeed increment is multiplicative rather than a fixed additive amount.
+
+# Fold-Change Corrected Resynthesis Ratio
+
+```{r}
+ref_fold_increase <- mps %>%
+  filter(group == reference_group) %>%
+  summarise(ref = mean(peak_window / baseline, na.rm = TRUE)) %>%
+  pull(ref)
+
+mps_FC <- mps_resynth %>%
+  mutate(resynthesis_ratio_fold = (post2 / baseline) / ref_fold_increase)
+
+cor.test(mps_FC$resynthesis_ratio, mps_FC$resynthesis_ratio_fold, method = "spearman")
+
+lm_mpsFC <- lm(resynthesis_ratio_fold ~ IFI, data = mps_FC)
+summary(lm_mpsFC)
+```
+
+## Post-hoc Comparisons
+
+Using `resynthesis_ratio_fold` — since this is the version that resolves the baseline confound — the continuous IFI regression above remains the primary test for an overall trend; the pairwise contrasts below answer the follow-up question of which specific groups differ from one another.
+
+```{r}
+m_group_fold <- lm(resynthesis_ratio_fold ~ group, data = mps_FC)
+anova(m_group_fold)
+
+qqnorm(resid(m_group_fold)); qqline(resid(m_group_fold))
+
+emm <- emmeans(m_group_fold, pairwise ~ group, adjust = "tukey")
+emm$emmeans
+emm$contrasts
+
+dunnTest(resynthesis_ratio_fold ~ group, data = mps_FC, method = "bh")
+```
+
+Correcting for the baseline difference using the fold-change ratio reveals genuine differences between the feeding groups. Post-hoc contrasts show a significant difference between the Mid and Late groups (p = 0.026), with the Early and Late groups showing only a non-significant trend in the same direction (p = 0.070); the Early and Mid groups do not differ significantly (p = 0.828).
+
+# Visualisations
+
+The following figures are prepared for presenting these results.
+
+```{r}
+p_group <- ggplot(mps_FC, aes(x = group, y = resynthesis_ratio_fold, fill = group)) +
+  geom_boxplot(width = 0.5, alpha = 0.5, outlier.shape = NA) +
+  geom_jitter(width = 0.08, size = 2.2, shape = 21, color = "black") +
+  geom_signif(comparisons = list(c("Early", "Mid"),
+                                  c("Mid", "Late"),
+                                  c("Early", "Late")),
+              annotations = c("p = 0.828", "p = 0.026", "p = 0.070"),
+              step_increase = 0.12,
+              tip_length = 0.02) +
+  scale_fill_viridis_d() +
+  labs(x = "Refeed timing group",
+       y = "Resynthesis ratio (fold-change corrected)") +
+  theme_clean(base_size = 13) +
+  scale_fill_manual(values = c(Early = '#0072B2', 
+                               Mid = '#009E73', 
+                               Late = '#D55E00')) + 
+  scale_colour_manual(values = c(Early = '#0072B2', 
+                                 Mid = '#009E73', 
+                                 Late = '#D55E00')) +
+  theme(legend.position = "none")
+
+p_group
+ggsave("resynthesis_ratio_by_group.png", p_group, width = 5, height = 4.5, dpi = 300)
+```
+
+```{r}
+p_doseresponse <- ggplot(mps_FC, aes(x = IFI, y = resynthesis_ratio_fold)) +
+  geom_smooth(method = "lm", color = "black", fill = "grey70", se = TRUE) +
+  geom_point(aes(color = group), size = 2.5) +
+  scale_color_viridis_d() +
+  labs(x = "Inter-feed interval (min)",
+       y = "Resynthesis ratio (fold-change corrected)",
+       color = "Group") +
+  scale_fill_manual(values = c(Early = '#0072B2', 
+                               Mid = '#009E73', 
+                               Late = '#D55E00')) + 
+  scale_colour_manual(values = c(Early = '#0072B2', 
+                                 Mid = '#009E73', 
+                                 Late = '#D55E00')) +
+  theme_clean(base_size = 13)
+
+p_doseresponse
+ggsave("resynthesis_ratio_doseresponse.png", p_doseresponse,
+       width = 5.5, height = 4.5, dpi = 300)
+```
+
+```{r}
+traj_summary <- traj_long %>%
+  group_by(group, time) %>%
+  summarise(mean_MPS = mean(MPS, na.rm = TRUE),
+            sem_MPS = sd(MPS, na.rm = TRUE) / sqrt(sum(!is.na(MPS))),
+            .groups = "drop")
+
+p_traj <- ggplot(traj_summary, aes(x = time, y = mean_MPS, color = group)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  geom_errorbar(aes(ymin = mean_MPS - sem_MPS, ymax = mean_MPS + sem_MPS),
+                width = 8) +
+  scale_color_viridis_d() +
+  labs(x = "Time (min)", y = "MPS", color = "Group") +
+  theme_clean(base_size = 13)
+
+p_traj
+ggsave("mps_trajectories_mean_sem.png", p_traj, width = 6, height = 4.5, dpi = 300)
+```
+
+*These three panels can be combined into a single multi-panel figure using the `patchwork` package, e.g. `(p_traj | p_group) / p_doseresponse`.*
+
+# Summary
+
+Baseline MPS differed significantly between groups (Kruskal-Wallis, p = 0.039), and this baseline difference was found to influence the additive resynthesis ratio — subjects with a higher baseline showed a lower ratio. A proportional (fold-change) version of the ratio, which corrects for baseline multiplicatively rather than additively, resolved this dependency and is used as the primary outcome measure.
+
+Using the fold-change-corrected resynthesis ratio, post-hoc comparisons indicate a significant difference between the Mid and Late refeed-timing groups, with the Early and Late groups showing only a non-significant trend in the same direction. This suggests the interval required to fully re-stimulate MPS following an initial feed may sit somewhere between the Mid (150 min) and Late (210 min) timepoints, though a larger sample size would help clarify the Early–Late trend and improve overall precision.
